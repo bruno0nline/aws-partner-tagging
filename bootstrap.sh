@@ -45,4 +45,10 @@ fi
 
 "$python_cmd" -m bs4it_tagging --help
 
-echo "Bootstrap complete. Edit config/config.yaml, then run: prm-tagger audit"
+"$python_cmd" -m bs4it_tagging.onboarding \
+    --template infrastructure/cloudformation/tagging-role.yaml \
+    --config config/config.yaml
+
+echo "Bootstrap complete. Configure the product code and resource scope, then run audit manually:"
+echo "  prm-tagger audit"
+echo "  prm-tagger audit --organization"

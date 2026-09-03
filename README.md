@@ -18,7 +18,7 @@ The internal Python package remains `bs4it_tagging` for backward compatibility. 
 
 - Python 3.11 or newer, Git, AWS CLI, and a configured default AWS Region.
 - Authenticated AWS credentials with read permissions for audit.
-- For Organizations: run from the management account (or adapt the design deliberately for a delegated administrator), with `organizations:ListAccounts` and `sts:AssumeRole` permissions.
+- For automatic Organizations onboarding, run from the management account with permission to inspect Organizations, manage service-managed CloudFormation StackSets, activate trusted access, create the named IAM role through CloudFormation, and later call `sts:AssumeRole`.
 - Before apply, review current AWS PRM eligibility and obtain change approval.
 
 ### 2. Clone and bootstrap
@@ -36,6 +36,15 @@ bash bootstrap.sh https://github.com/<owner>/aws-partner-tagging.git
 ```
 
 The script is idempotent, does not pull automatically, and never overwrites `config/config.yaml`.
+
+After installing the CLI, bootstrap reads the current STS identity and checks AWS Organizations:
+
+- In a standalone account, it finishes without creating AWS infrastructure.
+- In an Organization member account, it stops and directs the analyst to run from the management account.
+- In the management account, it inventories active member accounts, roots, and nested OUs without moving anything. It then displays the complete infrastructure plan and requires the analyst to type `provision` before any AWS change.
+- Once confirmed, it activates StackSets trusted access when needed, creates or updates the service-managed `PRM-Resource-Tagging` StackSet, targets the existing Organization roots, waits for operations, and validates Stack Instance results.
+
+Bootstrap never runs `audit` or `apply`. Declining the confirmation leaves AWS unchanged. Re-running bootstrap updates the existing StackSet and Stack Instances rather than creating a second deployment.
 
 ### 3. Configure scope and product code
 
@@ -63,9 +72,9 @@ An empty `include_regions` discovers every enabled or opted-in Region returned b
 
 The checked-in example intentionally enables only explicitly listed EC2 resource types. Add services and resource types only after verifying that they are part of the Partner solution and eligible under the current AWS PRM documentation.
 
-### 4. Deploy `PRM-TaggingRole` to member accounts
+### 4. Review and confirm `PRM-TaggingRole` provisioning
 
-Use the service-managed StackSet procedure below. The management account is not given a stack instance; its local execution uses the caller credentials.
+When bootstrap prints `AWS CHANGE PLAN`, verify the management account, Region, discovered account count, Organization roots, StackSet action, and role name. Type `provision` only after review. The management account is not given a Stack Instance; local audits there use caller credentials.
 
 ### 5. Audit, review, apply, audit again
 
@@ -132,39 +141,25 @@ Management Account
                sts:AssumeRole
 ```
 
-Service-managed StackSets integrate with AWS Organizations. Select the existing client OUs that contain the intended member accounts; do not move accounts merely to install this solution. CloudFormation [does not deploy service-managed stack instances to the management account](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-associate-stackset-with-org.html).
+Service-managed StackSets integrate with AWS Organizations. Bootstrap uses the existing Organization roots as deployment targets, so all current member accounts are covered and automatic deployment covers accounts later added beneath those roots. It enumerates nested OUs for the plan but never creates, deletes, or moves an OU or account. CloudFormation [does not deploy service-managed stack instances to the management account](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-associate-stackset-with-org.html).
 
-From the management account, after activating trusted access for StackSets:
+The administration and deployment Region is the Region selected by the normal AWS SDK configuration (`AWS_REGION`, `AWS_DEFAULT_REGION`, or the configured profile). Set it explicitly before bootstrap if needed:
 
 ```bash
-MANAGEMENT_ACCOUNT_ID="<12-digit-management-account-id>"
-TARGET_OU_ID="<ou-id>"
-STACKSET_REGION="<stackset-administration-region>"
-DEPLOY_REGION="<one-enabled-region>"
-
-aws cloudformation create-stack-set \
-  --region "$STACKSET_REGION" \
-  --stack-set-name PRM-Resource-Tagging \
-  --template-body file://infrastructure/cloudformation/tagging-role.yaml \
-  --permission-model SERVICE_MANAGED \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameters \
-    ParameterKey=ManagementAccountId,ParameterValue="$MANAGEMENT_ACCOUNT_ID" \
-    ParameterKey=RoleName,ParameterValue=PRM-TaggingRole \
-    ParameterKey=ExternalId,ParameterValue=PRMTaggingAutomation
-
-aws cloudformation create-stack-instances \
-  --region "$STACKSET_REGION" \
-  --stack-set-name PRM-Resource-Tagging \
-  --deployment-targets OrganizationalUnitIds="$TARGET_OU_ID" \
-  --regions "$DEPLOY_REGION"
+export AWS_REGION="<stackset-administration-region>"
+bash bootstrap.sh
 ```
+
+The automated workflow uses `infrastructure/cloudformation/tagging-role.yaml`, StackSet name `PRM-Resource-Tagging`, role name `PRM-TaggingRole`, service-managed permissions, automatic deployment, and `RetainStacksOnAccountRemoval=false`. It creates or updates the same resources on rerun.
 
 The IAM role is global, so one enabled deployment Region per account is sufficient. Inspect the StackSet operation before auditing. The supplied role contains only Tagging API discovery/write, native EC2 discovery/tagging, and explicit tag-removal denies. If additional services require service-specific permissions behind `TagResources`, extend the customer-local policy narrowly and review it before deployment. See [StackSets concepts](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-concepts.html), [service-managed StackSets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-orgs-associate-stackset-with-org.html), [AWS Organizations](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_introduction.html), and [IAM AssumeRole](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html).
 
 ## Troubleshooting
 
 - **AccessDenied during Organizations discovery:** the caller needs `organizations:ListAccounts`; verify that execution is from an authorized management/delegated account.
+- **Bootstrap reports a member account:** automatic provisioning intentionally requires the management account so that management-account detection and StackSet ownership are unambiguous.
+- **Trusted-access failure:** verify permission for CloudFormation `ActivateOrganizationsAccess`, Organizations service access, and service-linked role creation. Bootstrap stops and reports the AWS error.
+- **StackSet partial failure:** inspect the reported StackSet operation and failed Stack Instance, correct permissions/quotas in that member account, then rerun bootstrap. The existing StackSet is updated idempotently.
 - **AssumeRole fails:** confirm the role exists in that member account, the caller can call `sts:AssumeRole`, and the role trust principal points to the correct management account.
 - **ExternalId mismatch:** `organization.external_id` must exactly match the StackSet `ExternalId` parameter. Treat a unique customer value as defense in depth, not as a password.
 - **Describe failure:** add only the read permission required by the configured native provider and verify the Region is enabled.

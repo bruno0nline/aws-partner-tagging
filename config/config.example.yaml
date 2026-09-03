@@ -44,6 +44,10 @@ filter_tags: {}
 reports_dir: "reports"
 
 organization:
+  # bootstrap.sh uses these values when it creates/updates the service-managed
+  # PRM-Resource-Tagging StackSet from the Organizations management account.
   role_name: "PRM-TaggingRole"
+  # This value is not a password, but use a distinct value for each Organization.
+  # It must remain identical here and in the StackSet parameters.
   external_id: "PRMTaggingAutomation"
   exclude_accounts: []

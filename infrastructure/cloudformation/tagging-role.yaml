@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cross-account role for AWS PRM Resource Tagging discovery and tag application.
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: AWS Organizations management account allowed to assume this role.
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: Must be a 12-digit AWS account ID.
+
+  RoleName:
+    Type: String
+    Default: PRM-TaggingRole
+    AllowedPattern: "^[A-Za-z0-9+=,.@_-]{1,64}$"
+
+  ExternalId:
+    Type: String
+    Default: PRMTaggingAutomation
+    MinLength: 2
+    MaxLength: 1224
+    NoEcho: true
+    Description: Must match organization.external_id in the local configuration.
+
+Resources:
+  TaggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Discovers configured resources and adds AWS PRM tags.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowManagementAccount
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${ManagementAccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: PRM-Resource-Tagging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DiscoverViaTaggingAPI
+                Effect: Allow
+                Action: tag:GetResources
+                Resource: "*"
+              - Sid: ApplyViaTaggingAPI
+                Effect: Allow
+                Action: tag:TagResources
+                Resource: "*"
+              - Sid: DiscoverSupportedEC2Resources
+                Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeInternetGateways
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeVpcEndpoints
+                  - ec2:DescribeTransitGateways
+                  - ec2:DescribeTransitGatewayAttachments
+                Resource: "*"
+              - Sid: TagSupportedEC2Resources
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: "*"
+              - Sid: NeverRemoveTags
+                Effect: Deny
+                Action:
+                  - tag:UntagResources
+                  - ec2:DeleteTags
+                Resource: "*"
+      Tags:
+        - Key: Purpose
+          Value: PRMTaggingAutomation
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt TaggingRole.Arn
+  RoleName:
+    Value: !Ref TaggingRole

@@ -1,0 +1,49 @@
+# AWS PRM Resource Tagging configuration
+# Copy to config/config.yaml. The local file is ignored by Git.
+
+# Required AWS PRM tag: aws-apn-id = pc:<product_code>
+partner:
+  product_code: "<your-product-code>"
+
+# Optional Partner governance tags. These are not AWS PRM requirements.
+# Remove this block or use additional_tags: {} if they are not wanted.
+additional_tags:
+  ManagedBy: "<your-company>"
+  ManagementScope: "ManagedServices"
+
+# Deliberately scope services and resource types. Check current AWS PRM
+# eligibility before expanding this list. The example enables only resource
+# types covered by native EC2 discovery.
+allowed_services:
+  - ec2
+
+resource_types:
+  ec2:
+    include:
+      - instance
+      - volume
+      - snapshot
+      - vpc
+      - subnet
+      - internet-gateway
+      - natgateway
+      - elastic-ip
+      - vpc-endpoint
+      - transit-gateway
+      - transit-gateway-attachment
+
+# Empty means all enabled/opted-in Regions returned by EC2 DescribeRegions.
+# Set an explicit list to reduce scope. exclude_regions applies only when this
+# list is empty.
+include_regions: []
+exclude_regions: []
+
+# Optional discovery filter. Leave empty for the broadest available discovery.
+filter_tags: {}
+
+reports_dir: "reports"
+
+organization:
+  role_name: "PRM-TaggingRole"
+  external_id: "PRMTaggingAutomation"
+  exclude_accounts: []

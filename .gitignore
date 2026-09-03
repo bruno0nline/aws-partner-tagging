@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Dev artifacts
+run_audit.py
+summary.py
+
+# AWS credentials — NEVER commit these
+.aws/
+*.pem
+*.key
+credentials
+aws_credentials*
+
+# Config with real values — use config.example.yaml as template
+config/config.yaml
+config/config.yml
+config/config-*.yaml
+config/config-*.yml
+
+# Reports (may contain account IDs and ARNs)
+reports/*.csv
+reports/*.json
+reports/*.xlsx
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# OS
+.DS_Store
+Thumbs.db

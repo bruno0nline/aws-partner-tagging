@@ -2,6 +2,8 @@
 
 `prm-tagger` is an independent Python CLI for discovering, auditing, reporting, and safely adding AWS Partner Revenue Measurement (PRM) resource tags in one AWS account or across AWS Organizations. It is not an official AWS tool.
 
+The complete onboarding and audit workflow has been validated successfully in a real AWS Organizations environment, including management-account detection, service-managed StackSet provisioning, member-account role deployment, and an Organization-wide read-only audit. The validation did not move accounts or OUs and did not apply tags.
+
 The required PRM tag is:
 
 ```text
@@ -86,6 +88,14 @@ prm-tagger audit --organization
 ```
 
 For one account, omit `--organization`. `apply` requires typing `apply`; `--yes` is intended only for automation with an external approval control.
+
+The intended operational sequence is:
+
+1. `bootstrap.sh` installs the CLI, detects the AWS environment, and—after explicit confirmation—prepares Organizations infrastructure.
+2. The service-managed `PRM-Resource-Tagging` StackSet deploys `PRM-TaggingRole` to member accounts.
+3. `prm-tagger audit --organization` performs read-only discovery and produces a local report.
+4. An analyst reviews scope, eligibility, conflicts, errors, and proposed missing tags.
+5. Only after approval, the analyst runs `prm-tagger apply --organization`; bootstrap never runs it automatically.
 
 ## AWS PRM scope
 

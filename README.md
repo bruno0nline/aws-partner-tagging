@@ -26,7 +26,7 @@ The internal Python package remains `bs4it_tagging` for backward compatibility. 
 ### 2. Clone and bootstrap
 
 ```bash
-git clone https://github.com/<owner>/aws-partner-tagging.git
+git clone https://github.com/bruno0nline/aws-partner-tagging.git
 cd aws-partner-tagging
 bash bootstrap.sh
 ```

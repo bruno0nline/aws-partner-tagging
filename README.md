@@ -103,6 +103,12 @@ The tool derives `aws-apn-id` only from `partner.product_code`. AWS PRM eligibil
 
 For IaC-managed resources, prefer adding the PRM tag in CloudFormation, Terraform, or CDK to avoid drift.
 
+### V1 supported services
+
+V1 provides native inventory for EC2/EBS (including Transit Gateway), S3, RDS, Elastic Load Balancing, Lambda, ECS, EKS, DynamoDB, ElastiCache, EFS, AWS Backup, Secrets Manager, SNS, SQS, API Gateway REST APIs, CloudFront, and Route 53 hosted zones. The checked-in configuration keeps every service and resource type explicitly selectable.
+
+S3 uses its native APIs for discovery, tag reads, and tag writes. Before `PutBucketTagging`, the tool reads the current tag set again, treats any divergent desired value as `CONFLICT`, and merges absent tags with all existing tags because the S3 operation replaces the complete tag set.
+
 ## Status model
 
 | Status | Meaning | Automatic behavior |
@@ -132,7 +138,9 @@ Discovery uses an extensible provider pattern:
 - `Ec2NativeProvider` calls native read-only EC2 APIs and finds completely untagged instances, volumes, account-owned snapshots, VPCs, subnets, internet gateways, NAT gateways, Elastic IP allocations, VPC endpoints, transit gateways, and attachments when those types are configured.
 - Other configured services use Resource Groups Tagging API `GetResources`.
 
-`GetResources` returns tagged or previously tagged resources and [does not return never-tagged resources](https://docs.aws.amazon.com/resourcegroupstagging/latest/APIReference/API_GetResources.html). Therefore, the tool does not claim complete inventory outside native providers. `filter_tags` narrows discovery further and is unsuitable for a completeness audit. Global-service visibility and Tagging API support can also vary by Region and resource type.
+`GetResources` returns tagged or previously tagged resources and [does not return never-tagged resources](https://docs.aws.amazon.com/resourcegroupstagging/latest/APIReference/API_GetResources.html). V1 therefore uses native inventory for its supported services. Services added only through the generic provider retain the `GetResources` limitation. `filter_tags` applies only to that generic provider. Global services are inventoried once per account to avoid duplicate records.
+
+V1 intentionally limits several broad services to their principal billable resource types: RDS DB instances/clusters, Classic and ELBv2 load balancers, ECS clusters/services, EKS clusters, ElastiCache clusters, Backup vaults, API Gateway REST APIs, Route 53 hosted zones, and the explicit EC2 list in the example configuration. It does not yet inventory API Gateway v2 APIs, Route 53 health checks, ECS tasks/task definitions, RDS snapshots/proxies, or every secondary resource exposed by those services.
 
 Malformed or ambiguous ARNs are skipped rather than tagged. Both `resource-type/id` and `resource-type:id` ARN formats are supported; S3 bucket ARNs are recognized as type `bucket`. Add native providers deliberately instead of assuming broad coverage.
 

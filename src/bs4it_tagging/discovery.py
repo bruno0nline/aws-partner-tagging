@@ -254,6 +254,263 @@ class Ec2NativeProvider:
                 )
 
 
+class NativeInventoryProvider:
+    """Native inventory for V1 services, including resources with no tags."""
+
+    _GLOBAL_SERVICES: ClassVar[set[str]] = {"cloudfront", "route53"}
+
+    def __init__(self, service: str, allowed_resource_types: list[str] | None = None) -> None:
+        self.service = service
+        self._allowed = allowed_resource_types
+        self._processed_accounts: set[str] = set()
+
+    def _allowed_type(self, resource_type: str) -> bool:
+        return self._allowed is None or resource_type in self._allowed
+
+    @staticmethod
+    def _tag_dict(tags: list[dict] | dict | None) -> dict[str, str]:
+        if isinstance(tags, dict):
+            return {str(k): str(v) for k, v in tags.items()}
+        return {tag["Key"]: tag.get("Value", "") for tag in tags or []}
+
+    @staticmethod
+    def _pages(client, operation: str, **kwargs) -> Iterator[dict]:
+        if client.can_paginate(operation):
+            yield from client.get_paginator(operation).paginate(**kwargs)
+        else:
+            yield getattr(client, operation)(**kwargs)
+
+    def _record(
+        self, account_id: str, account_name: str, region: str, resource_type: str, arn: str, tags, native_id=None
+    ) -> ResourceRecord | None:
+        if not self._allowed_type(resource_type):
+            return None
+        return ResourceRecord(
+            account_id=account_id,
+            account_name=account_name,
+            region=region,
+            service=self.service,
+            resource_type=resource_type,
+            resource_arn=arn,
+            existing_tags=self._tag_dict(tags),
+            native_id=native_id,
+        )
+
+    def _inventory(self, session, region: str, account_id: str, account_name: str) -> Iterator[ResourceRecord]:
+        partition = session.get_partition_for_region(region)
+        client_name = "elbv2" if self.service == "elasticloadbalancing" else self.service
+        client = session.client(client_name, region_name=region)
+
+        if self.service == "s3":
+            for bucket in client.list_buckets().get("Buckets", []):
+                name = bucket["Name"]
+                location = client.get_bucket_location(Bucket=name).get("LocationConstraint") or "us-east-1"
+                if location == "EU":
+                    location = "eu-west-1"
+                if location != region:
+                    continue
+                try:
+                    tags = client.get_bucket_tagging(Bucket=name).get("TagSet", [])
+                except ClientError as error:
+                    if error.response.get("Error", {}).get("Code") in {"NoSuchTagSet", "NoSuchTagSetError"}:
+                        tags = []
+                    else:
+                        raise
+                record = self._record(account_id, account_name, location, "bucket", f"arn:{partition}:s3:::{name}", tags, name)
+                if record:
+                    yield record
+            return
+
+        if self.service == "rds":
+            specs = (("describe_db_instances", "DBInstances", "DBInstanceArn", "db"), ("describe_db_clusters", "DBClusters", "DBClusterArn", "cluster"))
+            for operation, collection, arn_key, resource_type in specs:
+                for page in self._pages(client, operation):
+                    for item in page.get(collection, []):
+                        arn = item[arn_key]
+                        tags = client.list_tags_for_resource(ResourceName=arn).get("TagList", [])
+                        record = self._record(account_id, account_name, region, resource_type, arn, tags, arn)
+                        if record:
+                            yield record
+            return
+
+        if self.service == "elasticloadbalancing":
+            for page in self._pages(client, "describe_load_balancers"):
+                for item in page.get("LoadBalancers", []):
+                    arn = item["LoadBalancerArn"]
+                    response = client.describe_tags(ResourceArns=[arn]).get("TagDescriptions", [])
+                    tags = response[0].get("Tags", []) if response else []
+                    record = self._record(account_id, account_name, region, "loadbalancer", arn, tags, arn)
+                    if record:
+                        yield record
+            classic = session.client("elb", region_name=region)
+            for page in self._pages(classic, "describe_load_balancers"):
+                for item in page.get("LoadBalancerDescriptions", []):
+                    name = item["LoadBalancerName"]
+                    arn = f"arn:{partition}:elasticloadbalancing:{region}:{account_id}:loadbalancer/{name}"
+                    response = classic.describe_tags(LoadBalancerNames=[name]).get("TagDescriptions", [])
+                    tags = response[0].get("Tags", []) if response else []
+                    record = self._record(
+                        account_id, account_name, region, "classic-loadbalancer", arn, tags, f"classic:{name}"
+                    )
+                    if record:
+                        yield record
+            return
+
+        if self.service == "lambda":
+            for page in self._pages(client, "list_functions"):
+                for item in page.get("Functions", []):
+                    arn = item["FunctionArn"]
+                    tags = client.list_tags(Resource=arn).get("Tags", {})
+                    record = self._record(account_id, account_name, region, "function", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "ecs":
+            for cluster_page in self._pages(client, "list_clusters"):
+                for cluster_arn in cluster_page.get("clusterArns", []):
+                    tags = client.list_tags_for_resource(resourceArn=cluster_arn).get("tags", [])
+                    record = self._record(account_id, account_name, region, "cluster", cluster_arn, tags, cluster_arn)
+                    if record:
+                        yield record
+                    for service_page in self._pages(client, "list_services", cluster=cluster_arn):
+                        for service_arn in service_page.get("serviceArns", []):
+                            tags = client.list_tags_for_resource(resourceArn=service_arn).get("tags", [])
+                            record = self._record(account_id, account_name, region, "service", service_arn, tags, service_arn)
+                            if record:
+                                yield record
+            return
+
+        if self.service == "eks":
+            for page in self._pages(client, "list_clusters"):
+                for name in page.get("clusters", []):
+                    cluster = client.describe_cluster(name=name)["cluster"]
+                    record = self._record(account_id, account_name, region, "cluster", cluster["arn"], cluster.get("tags"), cluster["arn"])
+                    if record:
+                        yield record
+            return
+
+        if self.service == "dynamodb":
+            for page in self._pages(client, "list_tables"):
+                for name in page.get("TableNames", []):
+                    arn = client.describe_table(TableName=name)["Table"]["TableArn"]
+                    tags = client.list_tags_of_resource(ResourceArn=arn).get("Tags", [])
+                    record = self._record(account_id, account_name, region, "table", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "elasticache":
+            for page in self._pages(client, "describe_cache_clusters"):
+                for item in page.get("CacheClusters", []):
+                    arn = item["ARN"]
+                    tags = client.list_tags_for_resource(ResourceName=arn).get("TagList", [])
+                    record = self._record(account_id, account_name, region, "cluster", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "efs":
+            for page in self._pages(client, "describe_file_systems"):
+                for item in page.get("FileSystems", []):
+                    file_system_id = item["FileSystemId"]
+                    arn = item.get("FileSystemArn") or f"arn:{partition}:elasticfilesystem:{region}:{account_id}:file-system/{file_system_id}"
+                    tags = client.list_tags_for_resource(ResourceId=file_system_id).get("Tags", [])
+                    record = self._record(account_id, account_name, region, "file-system", arn, tags, file_system_id)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "backup":
+            for page in self._pages(client, "list_backup_vaults"):
+                for item in page.get("BackupVaultList", []):
+                    arn = item["BackupVaultArn"]
+                    tags = client.list_tags(ResourceArn=arn).get("Tags", {})
+                    record = self._record(account_id, account_name, region, "backup-vault", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "secretsmanager":
+            for page in self._pages(client, "list_secrets", IncludePlannedDeletion=False):
+                for item in page.get("SecretList", []):
+                    record = self._record(account_id, account_name, region, "secret", item["ARN"], item.get("Tags"), item["ARN"])
+                    if record:
+                        yield record
+            return
+
+        if self.service == "sns":
+            for page in self._pages(client, "list_topics"):
+                for item in page.get("Topics", []):
+                    arn = item["TopicArn"]
+                    tags = client.list_tags_for_resource(ResourceArn=arn).get("Tags", [])
+                    record = self._record(account_id, account_name, region, "topic", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "sqs":
+            for page in self._pages(client, "list_queues"):
+                for url in page.get("QueueUrls", []):
+                    arn = client.get_queue_attributes(QueueUrl=url, AttributeNames=["QueueArn"])["Attributes"]["QueueArn"]
+                    tags = client.list_queue_tags(QueueUrl=url).get("Tags", {})
+                    record = self._record(account_id, account_name, region, "queue", arn, tags, url)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "apigateway":
+            for page in self._pages(client, "get_rest_apis"):
+                for item in page.get("items", []):
+                    arn = f"arn:{partition}:apigateway:{region}::/restapis/{item['id']}"
+                    tags = client.get_tags(resourceArn=arn).get("tags", {})
+                    record = self._record(account_id, account_name, region, "restapis", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "cloudfront":
+            for page in self._pages(client, "list_distributions"):
+                for item in page.get("DistributionList", {}).get("Items", []):
+                    arn = item["ARN"]
+                    tags = client.list_tags_for_resource(Resource=arn).get("Tags", {}).get("Items", [])
+                    record = self._record(account_id, account_name, region, "distribution", arn, tags, arn)
+                    if record:
+                        yield record
+            return
+
+        if self.service == "route53":
+            for page in self._pages(client, "list_hosted_zones"):
+                for item in page.get("HostedZones", []):
+                    zone_id = item["Id"].split("/")[-1]
+                    arn = f"arn:{partition}:route53:::hostedzone/{zone_id}"
+                    tags = client.list_tags_for_resource(ResourceType="hostedzone", ResourceId=zone_id).get("ResourceTagSet", {}).get("Tags", [])
+                    record = self._record(account_id, account_name, region, "hostedzone", arn, tags, zone_id)
+                    if record:
+                        yield record
+
+    def discover(self, session, region: str, account_id: str, account_name: str) -> Iterator[ResourceRecord]:
+        if self.service in self._GLOBAL_SERVICES:
+            if account_id in self._processed_accounts:
+                return
+            self._processed_accounts.add(account_id)
+        try:
+            yield from self._inventory(session, region, account_id, account_name)
+        except (BotoCoreError, ClientError) as error:
+            logger.warning("Native discovery error for %s in %s/%s: %s", self.service, account_id, region, error)
+            yield ResourceRecord(
+                account_id=account_id, account_name=account_name, region=region, service=self.service,
+                resource_type="discovery", resource_arn=f"discovery-error:{account_id}:{region}:{self.service}",
+                status=TagStatus.ERROR, error=str(error),
+            )
+
+
+NATIVE_V1_SERVICES = {
+    "s3", "rds", "elasticloadbalancing", "lambda", "ecs", "eks", "dynamodb", "elasticache", "efs",
+    "backup", "secretsmanager", "sns", "sqs", "apigateway", "cloudfront", "route53",
+}
+
+
 def build_providers(
     allowed_services: list[str],
     filter_tags: dict[str, str] | None = None,
@@ -265,6 +522,8 @@ def build_providers(
         allowed_types = (resource_types or {}).get(svc)
         if svc == "ec2":
             providers.append(Ec2NativeProvider(allowed_types))
+        elif svc in NATIVE_V1_SERVICES:
+            providers.append(NativeInventoryProvider(svc, allowed_types))
         else:
             providers.append(TaggingAPIProvider(svc, filter_tags=filter_tags, allowed_resource_types=allowed_types))
     return providers

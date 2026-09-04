@@ -72,11 +72,89 @@ Resources:
                 Effect: Allow
                 Action: ec2:CreateTags
                 Resource: "*"
+              - Sid: DiscoverSupportedV1Resources
+                Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:ListTagsForResource
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTags
+                  - lambda:ListFunctions
+                  - lambda:ListTags
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                  - ecs:ListTagsForResource
+                  - eks:ListClusters
+                  - eks:DescribeCluster
+                  - eks:ListTagsForResource
+                  - dynamodb:ListTables
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListTagsOfResource
+                  - elasticache:DescribeCacheClusters
+                  - elasticache:ListTagsForResource
+                  - elasticfilesystem:DescribeFileSystems
+                  - elasticfilesystem:ListTagsForResource
+                  - backup:ListBackupVaults
+                  - backup:ListTags
+                  - secretsmanager:ListSecrets
+                  - secretsmanager:DescribeSecret
+                  - sns:ListTopics
+                  - sns:ListTagsForResource
+                  - sqs:ListQueues
+                  - sqs:GetQueueAttributes
+                  - sqs:ListQueueTags
+                  - apigateway:GET
+                  - cloudfront:ListDistributions
+                  - cloudfront:ListTagsForResource
+                  - route53:ListHostedZones
+                  - route53:ListTagsForResource
+                Resource: "*"
+              - Sid: TagSupportedV1Resources
+                Effect: Allow
+                Action:
+                  - s3:PutBucketTagging
+                  - rds:AddTagsToResource
+                  - elasticloadbalancing:AddTags
+                  - lambda:TagResource
+                  - ecs:TagResource
+                  - eks:TagResource
+                  - dynamodb:TagResource
+                  - elasticache:AddTagsToResource
+                  - elasticfilesystem:TagResource
+                  - backup:TagResource
+                  - secretsmanager:TagResource
+                  - sns:TagResource
+                  - sqs:TagQueue
+                  - cloudfront:TagResource
+                  - route53:ChangeTagsForResource
+                Resource: "*"
+              - Sid: TagApiGatewayResourcesOnly
+                Effect: Allow
+                Action: apigateway:POST
+                Resource: !Sub "arn:${AWS::Partition}:apigateway:*::/tags/*"
               - Sid: NeverRemoveTags
                 Effect: Deny
                 Action:
                   - tag:UntagResources
                   - ec2:DeleteTags
+                  - rds:RemoveTagsFromResource
+                  - elasticloadbalancing:RemoveTags
+                  - lambda:UntagResource
+                  - ecs:UntagResource
+                  - eks:UntagResource
+                  - dynamodb:UntagResource
+                  - elasticache:RemoveTagsFromResource
+                  - elasticfilesystem:UntagResource
+                  - backup:UntagResource
+                  - secretsmanager:UntagResource
+                  - sns:UntagResource
+                  - sqs:UntagQueue
+                  - apigateway:DELETE
+                  - cloudfront:UntagResource
                 Resource: "*"
       Tags:
         - Key: Purpose

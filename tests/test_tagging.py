@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError
 from bs4it_tagging.config import AppConfig, PartnerConfig
 from bs4it_tagging.discovery import (
     Ec2NativeProvider,
+    NativeInventoryProvider,
     TaggingAPIProvider,
     build_providers,
     classify_resource,
@@ -314,7 +315,82 @@ def test_apply_handles_failed_resources_map(mocker):
 def test_build_providers_uses_native_ec2():
     providers = build_providers(["ec2", "s3"], resource_types={"ec2": ["instance", "snapshot"]})
     assert isinstance(providers[0], Ec2NativeProvider)
-    assert isinstance(providers[1], TaggingAPIProvider)
+    assert isinstance(providers[1], NativeInventoryProvider)
+
+
+def test_s3_native_discovers_untagged_bucket(mocker):
+    client = mocker.MagicMock()
+    client.list_buckets.return_value = {"Buckets": [{"Name": "example-bucket"}]}
+    client.get_bucket_location.return_value = {"LocationConstraint": None}
+    client.get_bucket_tagging.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchTagSet", "Message": "none"}}, "GetBucketTagging"
+    )
+    session = mocker.MagicMock()
+    session.client.return_value = client
+    session.get_partition_for_region.return_value = "aws"
+
+    records = list(NativeInventoryProvider("s3", ["bucket"]).discover(session, "us-east-1", "123456789012", "test"))
+
+    assert len(records) == 1
+    assert records[0].resource_arn == "arn:aws:s3:::example-bucket"
+    assert records[0].existing_tags == {}
+
+
+def test_s3_apply_merges_existing_tags_without_removing(mocker):
+    record = _record(service="s3", resource_type="bucket", resource_arn="arn:aws:s3:::example-bucket", native_id="example-bucket")
+    client = mocker.MagicMock()
+    client.get_bucket_tagging.return_value = {"TagSet": [{"Key": "Owner", "Value": "platform"}]}
+    session = mocker.MagicMock()
+    session.client.return_value = client
+
+    result = apply_tags(session, record, REQUIRED_APN_ONLY, dry_run=False)
+
+    assert result.status == TagStatus.COMPLIANT
+    client.put_bucket_tagging.assert_called_once_with(
+        Bucket="example-bucket",
+        Tagging={"TagSet": [{"Key": "Owner", "Value": "platform"}, {"Key": "aws-apn-id", "Value": "pc:testcode123"}]},
+    )
+
+
+def test_s3_apply_rechecks_conflict_and_never_writes(mocker):
+    record = _record(service="s3", resource_type="bucket", resource_arn="arn:aws:s3:::example-bucket", native_id="example-bucket")
+    client = mocker.MagicMock()
+    client.get_bucket_tagging.return_value = {"TagSet": [{"Key": "aws-apn-id", "Value": "pc:different"}]}
+    session = mocker.MagicMock()
+    session.client.return_value = client
+
+    result = apply_tags(session, record, REQUIRED_APN_ONLY, dry_run=False)
+
+    assert result.status == TagStatus.CONFLICT
+    assert result.action == Action.SKIPPED
+    client.put_bucket_tagging.assert_not_called()
+
+
+def test_lambda_apply_uses_native_api_and_preserves_existing_tags(mocker):
+    record = _record(
+        service="lambda",
+        resource_type="function",
+        resource_arn="arn:aws:lambda:us-east-1:123456789012:function:example",
+        native_id="arn:aws:lambda:us-east-1:123456789012:function:example",
+    )
+    client = mocker.MagicMock()
+    client.list_tags.return_value = {"Tags": {"Owner": "platform"}}
+    session = mocker.MagicMock()
+    session.client.return_value = client
+
+    result = apply_tags(session, record, REQUIRED_APN_ONLY, dry_run=False)
+
+    assert result.status == TagStatus.COMPLIANT
+    client.tag_resource.assert_called_once_with(Resource=record.resource_arn, Tags=REQUIRED_APN_ONLY)
+    session.client.assert_called_with("lambda", region_name="us-east-1")
+
+
+def test_all_v1_services_build_native_providers():
+    services = [
+        "s3", "rds", "elasticloadbalancing", "lambda", "ecs", "eks", "dynamodb", "elasticache", "efs",
+        "backup", "secretsmanager", "sns", "sqs", "apigateway", "cloudfront", "route53",
+    ]
+    assert all(isinstance(provider, NativeInventoryProvider) for provider in build_providers(services))
 
 
 def test_ec2_native_discovers_zero_tagged_snapshot(mocker):
@@ -505,6 +581,14 @@ def test_config_defaults_no_ssm():
     """ssm must not be in default allowed_services."""
     cfg = AppConfig.load(path="nonexistent-path.yaml")
     assert "ssm" not in cfg.allowed_services
+
+
+def test_example_config_enables_all_v1_services():
+    cfg = AppConfig.load("config/config.example.yaml")
+    assert set(cfg.allowed_services) == {
+        "ec2", "s3", "rds", "elasticloadbalancing", "lambda", "ecs", "eks", "dynamodb", "elasticache",
+        "efs", "backup", "secretsmanager", "sns", "sqs", "apigateway", "cloudfront", "route53",
+    }
 
 
 def test_config_from_yaml_full(tmp_path):

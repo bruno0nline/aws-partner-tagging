@@ -12,10 +12,26 @@ additional_tags:
   ManagementScope: "ManagedServices"
 
 # Deliberately scope services and resource types. Check current AWS PRM
-# eligibility before expanding this list. The example enables only resource
-# types covered by native EC2 discovery.
+# eligibility before changing this list. V1 uses native inventory for these
+# services so completely untagged resources can be discovered.
 allowed_services:
   - ec2
+  - s3
+  - rds
+  - elasticloadbalancing
+  - lambda
+  - ecs
+  - eks
+  - dynamodb
+  - elasticache
+  - efs
+  - backup
+  - secretsmanager
+  - sns
+  - sqs
+  - apigateway
+  - cloudfront
+  - route53
 
 resource_types:
   ec2:
@@ -31,6 +47,38 @@ resource_types:
       - vpc-endpoint
       - transit-gateway
       - transit-gateway-attachment
+  s3:
+    include: [bucket]
+  rds:
+    include: [db, cluster]
+  elasticloadbalancing:
+    include: [loadbalancer, classic-loadbalancer]
+  lambda:
+    include: [function]
+  ecs:
+    include: [cluster, service]
+  eks:
+    include: [cluster]
+  dynamodb:
+    include: [table]
+  elasticache:
+    include: [cluster]
+  efs:
+    include: [file-system]
+  backup:
+    include: [backup-vault]
+  secretsmanager:
+    include: [secret]
+  sns:
+    include: [topic]
+  sqs:
+    include: [queue]
+  apigateway:
+    include: [restapis]
+  cloudfront:
+    include: [distribution]
+  route53:
+    include: [hostedzone]
 
 # Empty means all enabled/opted-in Regions returned by EC2 DescribeRegions.
 # Set an explicit list to reduce scope. exclude_regions applies only when this
@@ -38,7 +86,8 @@ resource_types:
 include_regions: []
 exclude_regions: []
 
-# Optional discovery filter. Leave empty for the broadest available discovery.
+# Optional filter for services using the generic Tagging API provider. Native
+# V1 providers ignore this filter so their inventory remains complete.
 filter_tags: {}
 
 reports_dir: "reports"

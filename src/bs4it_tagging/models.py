@@ -28,6 +28,7 @@ class ResourceRecord:
     status: TagStatus = TagStatus.MISSING
     action: Action = Action.NONE
     error: str | None = None
+    native_id: str | None = None
 
     @property
     def aws_apn_id(self) -> str:

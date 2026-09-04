@@ -393,6 +393,33 @@ def test_all_v1_services_build_native_providers():
     assert all(isinstance(provider, NativeInventoryProvider) for provider in build_providers(services))
 
 
+def test_ecs_native_discovery_accepts_lowercase_tag_keys(mocker):
+    cluster_arn = "arn:aws:ecs:us-east-1:123456789012:cluster/example"
+    service_arn = "arn:aws:ecs:us-east-1:123456789012:service/example/app"
+    client = mocker.MagicMock()
+    client.can_paginate.return_value = False
+    client.list_clusters.return_value = {"clusterArns": [cluster_arn]}
+    client.list_services.return_value = {"serviceArns": [service_arn]}
+    client.list_tags_for_resource.side_effect = [
+        {"tags": [{"key": "Owner", "value": "platform"}]},
+        {"tags": [{"key": "Environment", "value": "test"}]},
+    ]
+    session = mocker.MagicMock()
+    session.client.return_value = client
+    session.get_partition_for_region.return_value = "aws"
+
+    records = list(
+        NativeInventoryProvider("ecs", ["cluster", "service"]).discover(
+            session, "us-east-1", "123456789012", "test"
+        )
+    )
+
+    assert [(record.resource_type, record.existing_tags) for record in records] == [
+        ("cluster", {"Owner": "platform"}),
+        ("service", {"Environment": "test"}),
+    ]
+
+
 def test_ec2_native_discovers_zero_tagged_snapshot(mocker):
     client = mocker.MagicMock()
     client.can_paginate.return_value = False

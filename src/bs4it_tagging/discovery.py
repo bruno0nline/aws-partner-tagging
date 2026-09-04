@@ -369,13 +369,15 @@ class NativeInventoryProvider:
         if self.service == "ecs":
             for cluster_page in self._pages(client, "list_clusters"):
                 for cluster_arn in cluster_page.get("clusterArns", []):
-                    tags = client.list_tags_for_resource(resourceArn=cluster_arn).get("tags", [])
+                    ecs_tags = client.list_tags_for_resource(resourceArn=cluster_arn).get("tags", [])
+                    tags = {tag["key"]: tag.get("value", "") for tag in ecs_tags}
                     record = self._record(account_id, account_name, region, "cluster", cluster_arn, tags, cluster_arn)
                     if record:
                         yield record
                     for service_page in self._pages(client, "list_services", cluster=cluster_arn):
                         for service_arn in service_page.get("serviceArns", []):
-                            tags = client.list_tags_for_resource(resourceArn=service_arn).get("tags", [])
+                            ecs_tags = client.list_tags_for_resource(resourceArn=service_arn).get("tags", [])
+                            tags = {tag["key"]: tag.get("value", "") for tag in ecs_tags}
                             record = self._record(account_id, account_name, region, "service", service_arn, tags, service_arn)
                             if record:
                                 yield record

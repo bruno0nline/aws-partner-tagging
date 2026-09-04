@@ -11,9 +11,9 @@ additional_tags:
   ManagedBy: "<your-company>"
   ManagementScope: "ManagedServices"
 
-# Deliberately scope services and resource types. Check current AWS PRM
-# eligibility before changing this list. V1 uses native inventory for these
-# services so completely untagged resources can be discovered.
+# The example enables the services supported by V1. Keep the scope configurable
+# and verify current AWS PRM eligibility before changing this list. V1 uses
+# native inventory so completely untagged resources can be discovered.
 allowed_services:
   - ec2
   - s3
